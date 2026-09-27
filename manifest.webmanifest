@@ -1,11 +1,11 @@
 {
-  "name": "Mis gastos COP",
+  "name": "Mis gastos · Control personal",
   "short_name": "Mis gastos",
   "description": "Registro privado de gastos en pesos colombianos con exportación a Excel",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
-  "background_color": "#f1f5f8",
-  "theme_color": "#153c58",
+  "background_color": "#f3f6f8",
+  "theme_color": "#102b3f",
   "icons": [{"src":"icon.svg","sizes":"any","type":"image/svg+xml","purpose":"any maskable"}]
 }
