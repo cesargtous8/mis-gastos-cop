@@ -11,7 +11,7 @@
 
   let expenses = [];
   let selectedCycle = cycleStart(todayISO());
-  let pendingImport = [];
+  let editingId = null;
   try {
     const saved = JSON.parse(localStorage.getItem(KEY) || '[]');
     if (Array.isArray(saved)) expenses = saved.filter(x => x && typeof x === 'object');
@@ -147,7 +147,7 @@
       row.className = 'row';
       const description = document.createElement('div');
       description.className = 'row-description';
-      description.textContent = x.descripcion || 'Gasto importado';
+      description.textContent = x.descripcion || 'Gasto';
       const amount = document.createElement('div');
       amount.className = 'row-amount';
       amount.textContent = money(x.valor);
@@ -157,7 +157,13 @@
       const id = document.createElement('div');
       id.className = 'row-id';
       id.textContent = `#${x.id}`;
-      row.append(description, amount, meta, id);
+      const edit = document.createElement('button');
+      edit.type = 'button';
+      edit.className = 'edit-button';
+      edit.textContent = 'Editar';
+      edit.setAttribute('aria-label', `Editar gasto #${x.id}`);
+      edit.addEventListener('click', () => openEditor(x));
+      row.append(description, amount, meta, id, edit);
       rows.append(row);
     });
   }
@@ -178,6 +184,48 @@
     } catch (error) { showStatus(error.message, 'error'); }
   });
 
+  const editDialog = document.querySelector('#edit-dialog');
+  const editForm = document.querySelector('#edit-form');
+  const editAmount = document.querySelector('#edit-amount');
+  const editDescription = document.querySelector('#edit-description');
+  const editLockNote = document.querySelector('#edit-lock-note');
+
+  function openEditor(item) {
+    editingId = item.id;
+    const editable = isoDate(cycleStart(item.fecha)) === isoDate(cycleStart(todayISO()));
+    editAmount.value = String(item.valor);
+    editAmount.readOnly = !editable;
+    editAmount.setAttribute('aria-readonly', String(!editable));
+    editDescription.value = item.descripcion || '';
+    editLockNote.hidden = editable;
+    document.querySelector('#edit-title').textContent = `Editar gasto #${item.id}`;
+    editDialog.hidden = false;
+    editAmount.focus();
+  }
+
+  function closeEditor() { editDialog.hidden = true; editingId = null; }
+  document.querySelector('#cancel-edit').addEventListener('click', closeEditor);
+  editDialog.addEventListener('click', event => { if (event.target === editDialog) closeEditor(); });
+  editForm.addEventListener('submit', event => {
+    event.preventDefault();
+    const index = expenses.findIndex(x => String(x.id) === String(editingId));
+    if (index < 0) { closeEditor(); render(); return; }
+    const previous = expenses[index];
+    const updated = { ...previous };
+    const editable = isoDate(cycleStart(previous.fecha)) === isoDate(cycleStart(todayISO()));
+    const amountText = editAmount.value.trim().replace(/[.,\s$]/g, '');
+    if (editable && (!/^\d+$/.test(amountText) || !Number.isSafeInteger(Number(amountText)) || Number(amountText) <= 0)) {
+      showStatus('El valor debe ser un número entero mayor que cero.', 'error'); editAmount.focus(); return;
+    }
+    const description = editDescription.value.trim();
+    if (!description) { showStatus('La descripción no puede quedar vacía.', 'error'); editDescription.focus(); return; }
+    if (editable) updated.valor = Number(amountText);
+    updated.descripcion = description;
+    expenses[index] = updated;
+    if (!persist()) { expenses[index] = previous; return; }
+    closeEditor(); render(); showStatus(`Gasto #${updated.id} actualizado.`, 'ok');
+  });
+
   document.querySelector('#previous-cycle').addEventListener('click', () => {
     selectedCycle = addCycles(selectedCycle, -1);
     render();
@@ -190,176 +238,6 @@
     const chosen = parseISO(event.target.value);
     if (chosen) { selectedCycle = chosen; render(); }
   });
-
-  // XLSX reader for ordinary Excel workbooks (stored or DEFLATE ZIP entries).
-  async function unzipXlsx(file) {
-    const bytes = new Uint8Array(await file.arrayBuffer());
-    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-    let eocd = -1;
-    for (let p = bytes.length - 22, min = Math.max(0, bytes.length - 65558); p >= min; p--) {
-      if (view.getUint32(p, true) === 0x06054b50) { eocd = p; break; }
-    }
-    if (eocd < 0) throw Error('El archivo no parece ser un Excel .xlsx válido.');
-    const entries = view.getUint16(eocd + 10, true);
-    let cursor = view.getUint32(eocd + 16, true);
-    const files = new Map();
-    const decoder = new TextDecoder();
-    for (let i = 0; i < entries; i++) {
-      if (view.getUint32(cursor, true) !== 0x02014b50) throw Error('No se pudo leer la estructura del Excel.');
-      const method = view.getUint16(cursor + 10, true);
-      const compressedSize = view.getUint32(cursor + 20, true);
-      const nameLength = view.getUint16(cursor + 28, true);
-      const extraLength = view.getUint16(cursor + 30, true);
-      const commentLength = view.getUint16(cursor + 32, true);
-      const localOffset = view.getUint32(cursor + 42, true);
-      const name = decoder.decode(bytes.subarray(cursor + 46, cursor + 46 + nameLength));
-      const localNameLength = view.getUint16(localOffset + 26, true);
-      const localExtraLength = view.getUint16(localOffset + 28, true);
-      const dataStart = localOffset + 30 + localNameLength + localExtraLength;
-      const compressed = bytes.slice(dataStart, dataStart + compressedSize);
-      let data;
-      if (method === 0) data = compressed;
-      else if (method === 8 && 'DecompressionStream' in window) {
-        try {
-          const stream = new Blob([compressed]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
-          data = new Uint8Array(await new Response(stream).arrayBuffer());
-        } catch { throw Error('Este navegador no puede abrir este Excel. Prueba con Chrome actualizado o impórtalo en formato CSV.'); }
-      } else throw Error('Formato de compresión no compatible. Prueba con Chrome actualizado o guarda el libro como CSV.');
-      files.set(name, decoder.decode(data));
-      cursor += 46 + nameLength + extraLength + commentLength;
-    }
-    return files;
-  }
-
-  function xmlDoc(source) {
-    const doc = new DOMParser().parseFromString(source, 'application/xml');
-    if (doc.querySelector('parsererror')) throw Error('El Excel contiene XML inválido.');
-    return doc;
-  }
-
-  function excelSerialDate(value) {
-    const serial = Number(value);
-    if (!Number.isFinite(serial) || serial < 1) return null;
-    const d = new Date(Date.UTC(1899, 11, 30) + Math.floor(serial) * 86400000);
-    return isoDate(new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
-  }
-
-  async function parseXlsx(file) {
-    const files = await unzipXlsx(file);
-    const sheetXml = files.get('xl/worksheets/sheet1.xml');
-    if (!sheetXml) throw Error('No encontré una hoja de gastos en el archivo.');
-    const strings = [];
-    if (files.has('xl/sharedStrings.xml')) {
-      const doc = xmlDoc(files.get('xl/sharedStrings.xml'));
-      doc.querySelectorAll('si').forEach(si => strings.push([...si.querySelectorAll('t')].map(t => t.textContent).join('')));
-    }
-    const doc = xmlDoc(sheetXml);
-    const rowNodes = [...doc.querySelectorAll('sheetData > row')];
-    if (!rowNodes.length) throw Error('La hoja de Excel está vacía.');
-    const getColumn = ref => {
-      const letters = String(ref).match(/^[A-Z]+/i)?.[0]?.toUpperCase() || '';
-      return [...letters].reduce((n, ch) => n * 26 + ch.charCodeAt(0) - 64, 0) - 1;
-    };
-    const matrix = rowNodes.map(row => {
-      const values = [];
-      row.querySelectorAll(':scope > c').forEach(cell => {
-        const col = getColumn(cell.getAttribute('r'));
-        const type = cell.getAttribute('t');
-        const v = cell.querySelector('v')?.textContent ?? '';
-        let value = v;
-        if (type === 's') value = strings[Number(v)] ?? '';
-        else if (type === 'inlineStr') value = [...cell.querySelectorAll('is t')].map(t => t.textContent).join('');
-        else if (type === 'b') value = v === '1';
-        values[col] = value;
-      });
-      return values;
-    });
-    const header = (matrix[0] || []).map(v => String(v ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase());
-    const findCol = fn => header.findIndex(fn);
-    const idCol = findCol(v => v === 'id');
-    const amountCol = findCol(v => /^(valor|monto)( \(cop\))?$/.test(v) || v.includes('valor') || v.includes('monto'));
-    const descriptionCol = findCol(v => v.includes('descripcion') || v.includes('concepto'));
-    const dateCol = findCol(v => v.includes('fecha'));
-    if (amountCol < 0 || descriptionCol < 0) throw Error('No reconozco las columnas. Necesito “Valor (COP)” y “Descripción”.');
-    const rows = [];
-    for (let i = 1; i < matrix.length; i++) {
-      const row = matrix[i];
-      const amount = Number(String(row[amountCol] ?? '').replace(/[.,\s]/g, ''));
-      const description = String(row[descriptionCol] ?? '').trim();
-      if (!Number.isSafeInteger(amount) || amount <= 0 || !description) continue;
-      let fecha = null;
-      if (dateCol >= 0 && row[dateCol] !== undefined && row[dateCol] !== '') {
-        const raw = String(row[dateCol]).trim();
-        if (/^\d{4,6}(\.\d+)?$/.test(raw)) fecha = excelSerialDate(raw);
-        else if (/^\d{4}-\d{2}-\d{2}/.test(raw)) fecha = raw.slice(0, 10);
-        else {
-          const dmy = raw.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
-          if (dmy) fecha = isoDate(new Date(Number(dmy[3]), Number(dmy[2]) - 1, Number(dmy[1])));
-        }
-        if (!validDate(fecha)) fecha = null;
-      }
-      const oldId = idCol >= 0 && row[idCol] !== undefined ? String(row[idCol]).trim() : String(i + 1);
-      rows.push({ valor: amount, descripcion: description, fecha, importKey: `legacy:${oldId}:${amount}:${description.toLocaleLowerCase('es')}` });
-    }
-    return rows;
-  }
-
-  const importInput = document.querySelector('#import-file');
-  document.querySelector('#import-button').addEventListener('click', () => importInput.click());
-  importInput.addEventListener('change', async () => {
-    const file = importInput.files?.[0];
-    importInput.value = '';
-    if (!file) return;
-    try {
-      if (!file.name.toLowerCase().endsWith('.xlsx')) throw Error('Selecciona el archivo .xlsx de gastos.');
-      pendingImport = await parseXlsx(file);
-      if (!pendingImport.length) throw Error('No encontré filas de gastos válidas en ese Excel.');
-      const existingKeys = new Set(expenses.map(x => x.importKey).filter(Boolean));
-      const newRows = pendingImport.filter(x => !existingKeys.has(x.importKey));
-      if (!newRows.length) {
-        showStatus('Ese Excel ya fue importado; no agregué filas duplicadas.', 'ok');
-        pendingImport = [];
-        return;
-      }
-      const missingDates = newRows.filter(x => !x.fecha).length;
-      document.querySelector('#import-count').textContent = `${newRows.length} gastos nuevos${missingDates ? ` · ${missingDates} sin fecha` : ''}`;
-      document.querySelector('#missing-date-wrap').hidden = missingDates === 0;
-      document.querySelector('#legacy-date').value = todayISO();
-      document.querySelector('#import-panel').hidden = false;
-      document.querySelector('#import-panel').scrollIntoView({ behavior: 'smooth', block: 'center' });
-      showStatus(missingDates ? 'El Excel antiguo no guarda fechas. Elige qué fecha asignar a esas filas antes de importar.' : 'Revisa el resumen y confirma la importación.', '');
-    } catch (error) { showStatus(error.message || 'No pude leer el Excel.', 'error'); }
-  });
-
-  document.querySelector('#cancel-import').addEventListener('click', cancelImport);
-  document.querySelector('#confirm-import').addEventListener('click', () => {
-    const existingKeys = new Set(expenses.map(x => x.importKey).filter(Boolean));
-    const missingDates = pendingImport.filter(x => !x.fecha);
-    const assignedDate = document.querySelector('#legacy-date').value;
-    if (missingDates.length && !validDate(assignedDate)) {
-      showStatus('Elige una fecha válida para los gastos que no tienen fecha.', 'error');
-      return;
-    }
-    const nextId = expenses.reduce((max, x) => Math.max(max, Number(x.id) || 0), 0) + 1;
-    const additions = pendingImport.filter(x => !existingKeys.has(x.importKey)).map((x, i) => ({
-      id: nextId + i,
-      valor: x.valor,
-      descripcion: x.descripcion,
-      fecha: x.fecha || assignedDate,
-      importKey: x.importKey
-    }));
-    expenses.push(...additions);
-    if (!persist()) { expenses.splice(expenses.length - additions.length, additions.length); return; }
-    selectedCycle = cycleStart(additions.map(x => x.fecha).sort()[0]);
-    cancelImport();
-    render();
-    showStatus(`Importación completa: ${additions.length} gastos agregados.`, 'ok');
-  });
-
-  function cancelImport() {
-    pendingImport = [];
-    document.querySelector('#import-panel').hidden = true;
-  }
 
   document.querySelector('#export-cut').addEventListener('click', () => {
     const records = normalizedExpenses().filter(x => {
