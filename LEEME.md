@@ -6,19 +6,23 @@ La aplicación es una PWA: se instala desde el navegador, funciona sin Python en
 
 - Los gastos se organizan en cortes del **día 15 al día 14 del mes siguiente**, incluidos ambos días.
 - Cada corte se identifica como **Mes 1, Mes 2, Mes 3…**, tomando como Mes 1 el corte más antiguo que tenga un gasto. Si importas registros históricos más antiguos, la numeración se ajusta cronológicamente.
-- Los controles **Anterior** y **Siguiente** permiten consultar cada corte y su total.
+- El selector permite saltar directamente a **Mes 1**, **Mes 2**, etc. Los botones anterior/siguiente también recorren los cortes.
+- La pantalla destaca el total del corte seleccionado y muestra aparte el total general y el número de movimientos.
 - **Importar gastos del Excel anterior** agrega registros al historial actual sin borrar los datos del teléfono. Los archivos que se vuelvan a importar no crean filas duplicadas.
-- El Excel descargado incluye la fecha y el número del corte.
-- Los registros ya guardados por la versión anterior de esta PWA permanecen en el mismo almacenamiento del navegador.
+- **Excel de este corte** descarga solo el mes seleccionado e incluye su resumen y total.
+- **Todo + resumen** descarga todos los gastos y una hoja aparte con el total de cada corte y el total histórico.
+- Al actualizar la app no se importa ningún archivo: los gastos de la PWA se conservan automáticamente en el almacenamiento local del mismo teléfono/navegador y se clasifican por la fecha ya guardada.
 
 ## Importar el Excel de la versión de PC
+
+La importación es solo para trasladar los datos del programa de PC por primera vez. No se necesita para actualizar la PWA ni para consultar los gastos que ya estaban registrados en ese mismo teléfono.
 
 1. En el computador, conserva una copia intacta de `gastos.xlsx`.
 2. Transfiere ese Excel al celular, por ejemplo mediante cable USB, Drive, OneDrive o correo.
 3. Abre la PWA instalada en el teléfono y entra a **Importar gastos del Excel anterior**.
 4. Selecciona el archivo `.xlsx` que transferiste.
 5. Revisa el número de filas que se van a importar. La aplicación usa `ID`, `Valor (COP)` y `Descripción`; también entiende una columna `Fecha` si el libro la tiene.
-6. El Excel de escritorio original no guardaba fechas. Para esas filas, elige una fecha representativa del corte al que pertenecen y pulsa **Importar gastos**. Esa fecha se asigna a cada fila antigua que no tenga fecha. Si necesitas repartir los datos en varios cortes, agrega una columna `Fecha` al Excel antes de importarlo y asigna la fecha de cada gasto.
+6. Si el Excel tiene una columna `Fecha`, cada gasto se asignará automáticamente a su corte. El Excel de escritorio original no guardaba fechas: las filas sin fecha usan hoy como valor sugerido. Si necesitas repartir esos gastos históricos entre varios cortes, agrega una columna `Fecha` con la fecha de cada compra antes de importar.
 7. Confirma que aparecen en el corte esperado y que los totales coinciden. La importación añade datos y no reemplaza el historial existente.
 
 Si repites la importación del mismo libro, los registros identificados con el mismo ID, valor y descripción se omiten. Los ID nuevos en la aplicación se generan automáticamente para evitar choques con registros que ya existían en el teléfono.
@@ -27,14 +31,12 @@ Si repites la importación del mismo libro, los registros identificados con el m
 
 La carpeta publicada debe incluir estos cinco archivos: `index.html`, `app.js`, `manifest.webmanifest`, `sw.js` e `icon.svg`. No subas `gastos.xlsx` ni ningún Excel con información personal.
 
-1. Entra al repositorio de GitHub y abre la carpeta que se publica con GitHub Pages.
-2. Reemplaza `index.html` y `sw.js` por los de esta versión. Añade `app.js`; conserva `manifest.webmanifest` e `icon.svg` si son los mismos.
-3. Pulsa **Commit changes** para guardar la actualización en la rama configurada para Pages.
-4. Espera a que termine la publicación. GitHub Pages debe servir el sitio por HTTPS.
-5. En el celular, cierra la app y vuelve a abrirla con internet para que el service worker descargue `app.js` y la versión nueva. Si aún aparece la interfaz anterior, cierra la PWA, vuelve a abrirla después de unos segundos y recarga la página en el navegador.
-6. Revisa un gasto de prueba, navega entre cortes y descarga un Excel antes de importar tu libro real.
+1. Sube `index.html`, `app.js`, `sw.js` y `LEEME.md` actualizados a la rama publicada. Conserva `manifest.webmanifest` e `icon.svg`.
+2. Espera a que termine el despliegue de GitHub Pages.
+3. En el celular, conecta internet, cierra la app y vuelve a abrirla para que el service worker cargue los archivos nuevos.
+4. Si aún aparece la interfaz anterior, abre el sitio en el navegador y recarga. No borres los datos del navegador.
 
-La app mantiene la misma clave de almacenamiento local (`gastos-cop-v1`) para conservar los gastos existentes. No borres los datos del navegador ni desinstales la PWA antes de confirmar que el historial sigue disponible y de guardar un respaldo.
+La app mantiene la misma clave de almacenamiento local (`gastos-cop-v1`) y el mismo origen web, por eso las actualizaciones normales no requieren importación. No borres los datos del navegador ni desinstales la PWA antes de confirmar que el historial sigue disponible y de guardar un respaldo.
 
 ## Instalar en el celular
 

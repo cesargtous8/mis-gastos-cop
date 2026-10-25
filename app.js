@@ -48,6 +48,10 @@
     return new Intl.DateTimeFormat('es-CO', { day: '2-digit', month: 'short', year: 'numeric' }).format(d);
   }
 
+  function shortDate(d) {
+    return new Intl.DateTimeFormat('es-CO', { day: 'numeric', month: 'short' }).format(d);
+  }
+
   function persist() {
     try {
       localStorage.setItem(KEY, JSON.stringify(expenses));
@@ -80,25 +84,52 @@
 
   function validDate(value) { return Boolean(parseISO(value)); }
 
+  function monthDistance(from, to) {
+    return (to.getFullYear() - from.getFullYear()) * 12 + to.getMonth() - from.getMonth();
+  }
+
+  function cycleList(all) {
+    const current = cycleStart(todayISO());
+    const dataCycles = all.map(x => cycleStart(x.fecha));
+    const firstData = dataCycles.length ? new Date(Math.min(...dataCycles)) : current;
+    const first = firstData < current ? firstData : current;
+    const lastData = dataCycles.length ? new Date(Math.max(...dataCycles)) : current;
+    const last = lastData > current ? lastData : current;
+    return Array.from({ length: monthDistance(first, last) + 1 }, (_, i) => addCycles(first, i));
+  }
+
+  function periodNumber(start, firstWithExpense) {
+    return Math.max(1, monthDistance(firstWithExpense, start) + 1);
+  }
+
   function render() {
     const all = normalizedExpenses();
-    const firstStart = all.length
+    const cycles = cycleList(all);
+    const firstWithExpense = all.length
       ? all.map(x => cycleStart(x.fecha)).sort((a, b) => a - b)[0]
-      : selectedCycle;
-    const currentCycle = cycleStart(todayISO());
-    const monthNumber = Math.max(1, (selectedCycle.getFullYear() - firstStart.getFullYear()) * 12
-      + selectedCycle.getMonth() - firstStart.getMonth() + 1);
+      : cycles[0];
+    if (!cycles.some(cycle => isoDate(cycle) === isoDate(selectedCycle))) selectedCycle = cycles[cycles.length - 1];
     const nextStart = addCycles(selectedCycle, 1);
     const cutExpenses = all.filter(x => {
       const d = parseISO(x.fecha);
       return d >= selectedCycle && d < nextStart;
     }).sort((a, b) => b.fecha.localeCompare(a.fecha) || Number(b.id) - Number(a.id));
 
-    document.querySelector('#period-label').textContent = `Mes ${monthNumber}`;
     document.querySelector('#period-range').textContent = `Del ${dateLabel(selectedCycle)} al ${dateLabel(new Date(nextStart.getFullYear(), nextStart.getMonth(), 14))}`;
-    document.querySelector('#previous-cycle').disabled = all.length === 0 || selectedCycle <= firstStart;
-    document.querySelector('#next-cycle').disabled = selectedCycle >= currentCycle;
+    const periodSelect = document.querySelector('#cycle-select');
+    periodSelect.replaceChildren();
+    cycles.forEach(cycle => {
+      const cycleEnd = new Date(addCycles(cycle, 1).getFullYear(), addCycles(cycle, 1).getMonth(), 14);
+      const option = document.createElement('option');
+      option.value = isoDate(cycle);
+      option.textContent = `Mes ${periodNumber(cycle, firstWithExpense)} · ${shortDate(cycle)}–${shortDate(cycleEnd)}`;
+      periodSelect.append(option);
+    });
+    periodSelect.value = isoDate(selectedCycle);
+    document.querySelector('#previous-cycle').disabled = selectedCycle <= cycles[0];
+    document.querySelector('#next-cycle').disabled = selectedCycle >= cycles[cycles.length - 1];
     document.querySelector('#total').textContent = money(cutExpenses.reduce((sum, x) => sum + (Number(x.valor) || 0), 0));
+    document.querySelector('#grand-total').textContent = money(all.reduce((sum, x) => sum + (Number(x.valor) || 0), 0));
     document.querySelector('#count').textContent = String(cutExpenses.length);
     document.querySelector('#count-label').textContent = `${cutExpenses.length} ${cutExpenses.length === 1 ? 'registro' : 'registros'}`;
 
@@ -141,7 +172,7 @@
       if (!persist()) { expenses.pop(); return; }
       selectedCycle = cycleStart(item.fecha);
       render();
-      showStatus(`Gasto #${item.id} guardado en Mes ${document.querySelector('#period-label').textContent.slice(4)}.`, 'ok');
+      showStatus(`Gasto #${item.id} guardado en el corte de hoy.`, 'ok');
       input.value = '';
       input.focus();
     } catch (error) { showStatus(error.message, 'error'); }
@@ -152,9 +183,12 @@
     render();
   });
   document.querySelector('#next-cycle').addEventListener('click', () => {
-    const current = cycleStart(todayISO());
-    if (selectedCycle < current) selectedCycle = addCycles(selectedCycle, 1);
+    selectedCycle = addCycles(selectedCycle, 1);
     render();
+  });
+  document.querySelector('#cycle-select').addEventListener('change', event => {
+    const chosen = parseISO(event.target.value);
+    if (chosen) { selectedCycle = chosen; render(); }
   });
 
   // XLSX reader for ordinary Excel workbooks (stored or DEFLATE ZIP entries).
@@ -327,37 +361,92 @@
     document.querySelector('#import-panel').hidden = true;
   }
 
-  document.querySelector('#export').addEventListener('click', () => {
-    if (!expenses.length) { showStatus('Agrega o importa un gasto antes de crear el Excel.', 'error'); return; }
-    const records = normalizedExpenses();
-    const all = [['ID', 'Valor (COP)', 'Descripción', 'Fecha', 'Corte'], ...records.map(x => [x.id, x.valor, x.descripcion, x.fecha, `Mes ${periodIndex(x.fecha)}`])];
-    const sheet = '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><sheetFormatPr defaultRowHeight="18"/><cols><col min="1" max="1" width="10" customWidth="1"/><col min="2" max="2" width="18" customWidth="1"/><col min="3" max="3" width="48" customWidth="1"/><col min="4" max="5" width="16" customWidth="1"/></cols><sheetData>' + all.map((row, ri) => '<row r="' + (ri + 1) + '">' + row.map((v, ci) => {
-      const ref = col(ci + 1) + (ri + 1);
-      if (ri === 0) return '<c r="' + ref + '" t="inlineStr" s="1"><is><t>' + xmlEscape(v) + '</t></is></c>';
-      if (ci < 2) return '<c r="' + ref + '"><v>' + Number(v) + '</v></c>';
-      return '<c r="' + ref + '" t="inlineStr"><is><t>' + xmlEscape(v) + '</t></is></c>';
-    }).join('') + '</row>').join('') + '</sheetData><autoFilter ref="A1:E' + all.length + '"/></worksheet>';
-    const files = [
-      ['[Content_Types].xml', '<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>'],
-      ['_rels/.rels', '<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>'],
-      ['xl/workbook.xml', '<?xml version="1.0" encoding="UTF-8"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Gastos" sheetId="1" r:id="rId1"/></sheets></workbook>'],
-      ['xl/_rels/workbook.xml.rels', '<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>'],
-      ['xl/styles.xml', '<?xml version="1.0" encoding="UTF-8"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><color rgb="FFFFFFFF"/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF1F4E78"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>'],
-      ['xl/worksheets/sheet1.xml', '<?xml version="1.0" encoding="UTF-8"?>' + sheet]
+  document.querySelector('#export-cut').addEventListener('click', () => {
+    const records = normalizedExpenses().filter(x => {
+      const d = parseISO(x.fecha);
+      return d >= selectedCycle && d < addCycles(selectedCycle, 1);
+    }).sort((a, b) => a.fecha.localeCompare(b.fecha) || Number(a.id) - Number(b.id));
+    const all = normalizedExpenses();
+    const first = all.length ? all.map(x => cycleStart(x.fecha)).sort((a, b) => a - b)[0] : cycleList(all)[0];
+    const number = periodNumber(selectedCycle, first);
+    const total = records.reduce((sum, x) => sum + (Number(x.valor) || 0), 0);
+    const expenseRows = [['ID', 'Valor (COP)', 'Descripción', 'Fecha', 'Corte'],
+      ...records.map(x => [Number(x.id), Number(x.valor), x.descripcion, x.fecha, `Mes ${periodNumber(cycleStart(x.fecha), first)}`])];
+    const summaryRows = [
+      ['RESUMEN DEL CORTE'],
+      ['Periodo', `Mes ${number}`],
+      ['Desde', isoDate(selectedCycle)],
+      ['Hasta', isoDate(new Date(addCycles(selectedCycle, 1).getFullYear(), addCycles(selectedCycle, 1).getMonth(), 14))],
+      ['Movimientos', records.length],
+      ['Total del corte (COP)', total]
     ];
+    downloadWorkbook(`gastos_Mes_${number}_${isoDate(selectedCycle)}.xlsx`, [
+      { name: 'Gastos', rows: expenseRows, widths: [10, 18, 48, 16, 14], filter: true },
+      { name: 'Resumen', rows: summaryRows, widths: [26, 28], filter: false }
+    ]);
+    showStatus(`Descargaste Mes ${number}: ${records.length} gastos por ${money(total)}.`, 'ok');
+  });
+
+  document.querySelector('#export-all').addEventListener('click', () => {
+    const records = normalizedExpenses().sort((a, b) => a.fecha.localeCompare(b.fecha) || Number(a.id) - Number(b.id));
+    const cycles = cycleList(records);
+    const first = records.length ? records.map(x => cycleStart(x.fecha)).sort((a, b) => a - b)[0] : cycles[0];
+    const expenseRows = [['ID', 'Valor (COP)', 'Descripción', 'Fecha', 'Corte'],
+      ...records.map(x => [Number(x.id), Number(x.valor), x.descripcion, x.fecha, `Mes ${periodNumber(cycleStart(x.fecha), first)}`])];
+    const summaryRows = [['Corte', 'Desde', 'Hasta', 'Movimientos', 'Total (COP)']];
+    for (const cycle of cycles) {
+      const until = addCycles(cycle, 1);
+      const inCycle = records.filter(x => {
+        const d = parseISO(x.fecha);
+        return d >= cycle && d < until;
+      });
+      summaryRows.push([
+        `Mes ${periodNumber(cycle, first)}`,
+        isoDate(cycle),
+        isoDate(new Date(until.getFullYear(), until.getMonth(), 14)),
+        inCycle.length,
+        inCycle.reduce((sum, x) => sum + (Number(x.valor) || 0), 0)
+      ]);
+    }
+    summaryRows.push(['TOTAL HISTORIAL', '', '', records.length, records.reduce((sum, x) => sum + (Number(x.valor) || 0), 0)]);
+    downloadWorkbook(`gastos_historial_${todayISO()}.xlsx`, [
+      { name: 'Gastos', rows: expenseRows, widths: [10, 18, 48, 16, 14], filter: true },
+      { name: 'Resumen por corte', rows: summaryRows, widths: [20, 16, 16, 16, 20], filter: false }
+    ]);
+    showStatus(`Descargaste el historial completo: ${records.length} gastos por ${money(records.reduce((sum, x) => sum + (Number(x.valor) || 0), 0))}.`, 'ok');
+  });
+
+  function worksheetXml(rows, widths, useFilter) {
+    const maxColumns = Math.max(1, ...rows.map(row => row.length));
+    const columns = widths.map((width, i) => `<col min="${i + 1}" max="${i + 1}" width="${width}" customWidth="1"/>`).join('');
+    const body = rows.map((row, ri) => `<row r="${ri + 1}">${Array.from({ length: maxColumns }, (_, ci) => {
+      const value = row[ci] ?? '';
+      const ref = col(ci + 1) + (ri + 1);
+      if (typeof value === 'number' && Number.isFinite(value)) return `<c r="${ref}"><v>${value}</v></c>`;
+      return `<c r="${ref}" t="inlineStr"${ri === 0 ? ' s="1"' : ''}><is><t xml:space="preserve">${xmlEscape(value)}</t></is></c>`;
+    }).join('')}</row>`).join('');
+    const filter = useFilter && rows.length > 1 ? `<autoFilter ref="A1:${col(maxColumns)}${rows.length}"/>` : '';
+    return `<?xml version="1.0" encoding="UTF-8"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><sheetFormatPr defaultRowHeight="18"/><cols>${columns}</cols><sheetData>${body}</sheetData>${filter}</worksheet>`;
+  }
+
+  function downloadWorkbook(filename, sheets) {
+    const contentSheets = sheets.map((_, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join('');
+    const workbookSheets = sheets.map((sheet, i) => `<sheet name="${xmlEscape(sheet.name)}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join('');
+    const relationships = sheets.map((_, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`).join('');
+    const files = [
+      ['[Content_Types].xml', `<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>${contentSheets}<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>`],
+      ['_rels/.rels', '<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>'],
+      ['xl/workbook.xml', `<?xml version="1.0" encoding="UTF-8"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>${workbookSheets}</sheets></workbook>`],
+      ['xl/_rels/workbook.xml.rels', `<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${relationships}<Relationship Id="rId${sheets.length + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`],
+      ['xl/styles.xml', '<?xml version="1.0" encoding="UTF-8"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><color rgb="FFFFFFFF"/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF1F4E78"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>']
+    ];
+    sheets.forEach((sheet, i) => files.push([`xl/worksheets/sheet${i + 1}.xml`, worksheetXml(sheet.rows, sheet.widths, sheet.filter)]));
     const url = URL.createObjectURL(zip(files));
     const link = document.createElement('a');
     link.href = url;
-    link.download = `gastos_${todayISO()}.xlsx`;
+    link.download = filename;
     link.click();
     setTimeout(() => URL.revokeObjectURL(url), 30000);
-    showStatus('Excel descargado con los cortes y sus totales. Búscalo en Archivos o Descargas.', 'ok');
-  });
-
-  function periodIndex(iso) {
-    const first = expenses.length ? expenses.map(x => cycleStart(validDate(x.fecha) ? x.fecha : todayISO())).sort((a, b) => a - b)[0] : selectedCycle;
-    const current = cycleStart(iso);
-    return Math.max(1, (current.getFullYear() - first.getFullYear()) * 12 + current.getMonth() - first.getMonth() + 1);
   }
 
   const encoder = new TextEncoder();
