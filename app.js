@@ -157,13 +157,17 @@
       const id = document.createElement('div');
       id.className = 'row-id';
       id.textContent = `#${x.id}`;
-      const edit = document.createElement('button');
-      edit.type = 'button';
-      edit.className = 'edit-button';
-      edit.textContent = 'Editar';
-      edit.setAttribute('aria-label', `Editar gasto #${x.id}`);
-      edit.addEventListener('click', () => openEditor(x));
-      row.append(description, amount, meta, id, edit);
+      row.append(description, amount, meta, id);
+      if (isCurrentCycle(x.fecha)) {
+        row.classList.add('has-edit');
+        const edit = document.createElement('button');
+        edit.type = 'button';
+        edit.className = 'edit-button';
+        edit.textContent = 'Editar';
+        edit.setAttribute('aria-label', `Editar gasto #${x.id}`);
+        edit.addEventListener('click', () => openEditor(x));
+        row.append(edit);
+      }
       rows.append(row);
     });
   }
@@ -188,16 +192,16 @@
   const editForm = document.querySelector('#edit-form');
   const editAmount = document.querySelector('#edit-amount');
   const editDescription = document.querySelector('#edit-description');
-  const editLockNote = document.querySelector('#edit-lock-note');
+
+  function isCurrentCycle(date) {
+    return isoDate(cycleStart(date)) === isoDate(cycleStart(todayISO()));
+  }
 
   function openEditor(item) {
+    if (!isCurrentCycle(item.fecha)) return;
     editingId = item.id;
-    const editable = isoDate(cycleStart(item.fecha)) === isoDate(cycleStart(todayISO()));
     editAmount.value = String(item.valor);
-    editAmount.readOnly = !editable;
-    editAmount.setAttribute('aria-readonly', String(!editable));
     editDescription.value = item.descripcion || '';
-    editLockNote.hidden = editable;
     document.querySelector('#edit-title').textContent = `Editar gasto #${item.id}`;
     editDialog.hidden = false;
     editAmount.focus();
@@ -211,15 +215,17 @@
     const index = expenses.findIndex(x => String(x.id) === String(editingId));
     if (index < 0) { closeEditor(); render(); return; }
     const previous = expenses[index];
+    if (!isCurrentCycle(previous.fecha)) {
+      closeEditor(); render(); showStatus('Solo se pueden editar gastos del corte actual.', 'error'); return;
+    }
     const updated = { ...previous };
-    const editable = isoDate(cycleStart(previous.fecha)) === isoDate(cycleStart(todayISO()));
     const amountText = editAmount.value.trim().replace(/[.,\s$]/g, '');
-    if (editable && (!/^\d+$/.test(amountText) || !Number.isSafeInteger(Number(amountText)) || Number(amountText) <= 0)) {
+    if (!/^\d+$/.test(amountText) || !Number.isSafeInteger(Number(amountText)) || Number(amountText) <= 0) {
       showStatus('El valor debe ser un número entero mayor que cero.', 'error'); editAmount.focus(); return;
     }
     const description = editDescription.value.trim();
     if (!description) { showStatus('La descripción no puede quedar vacía.', 'error'); editDescription.focus(); return; }
-    if (editable) updated.valor = Number(amountText);
+    updated.valor = Number(amountText);
     updated.descripcion = description;
     expenses[index] = updated;
     if (!persist()) { expenses[index] = previous; return; }

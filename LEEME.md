@@ -6,8 +6,8 @@ La aplicación es una PWA: se instala desde el navegador y guarda los registros 
 
 - Los cortes comprenden del **15 al 14 del mes siguiente**, incluidos ambos días. Cada periodo aparece como **Mes 1, Mes 2…**, en orden cronológico desde el primer corte con gastos.
 - El resumen muestra el total del corte seleccionado, el total histórico y el número de movimientos.
+- Solo los gastos del corte actual muestran la opción de edición. En cortes anteriores no se permite modificar ningún dato.
 - En el corte actual se pueden editar el valor y la descripción. La fecha original permanece para que el gasto no cambie de corte.
-- En cortes anteriores se puede corregir la descripción; el valor queda bloqueado para proteger los periodos cerrados.
 - **Excel de este corte** descarga los movimientos y el resumen del corte seleccionado.
 - **Todo + resumen** descarga el historial completo, el total de cada corte y el total general.
 - La función de importar archivos se quitó. Las actualizaciones de esta PWA conservan los datos existentes en el almacenamiento local del mismo navegador y dispositivo; no hay que importar un archivo al actualizar.
